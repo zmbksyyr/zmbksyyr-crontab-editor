@@ -1,0 +1,55 @@
+name: Go Build and Release
+
+on:
+  push:
+    branches:
+      - main # 当代码推送到 main 分支时触发此工作流
+
+jobs:
+  build:
+    runs-on: ubuntu-latest # 在最新的 Ubuntu 虚拟机上运行此作业
+
+    steps:
+    - name: Checkout code # 步骤1: 检出仓库代码
+      uses: actions/checkout@v4
+
+    - name: Set up Go # 步骤2: 设置 Go 环境
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22' # 指定你项目使用的 Go 版本
+
+    - name: Build Crontab Editor # 步骤3: 编译你的 Go 程序
+      run: |
+        # 确保在正确的工作目录
+        go mod tidy # 清理或下载依赖
+        CGO_ENABLED=0 go build -o crontab-editor . # 编译为可执行文件，CGO_ENABLED=0 生成静态链接的可执行文件
+
+    - name: List built files # 步骤4: 列出编译后的文件 (可选，用于调试)
+      run: ls -l
+
+    - name: Archive production artifacts # 步骤5: 将编译的可执行文件打包成一个压缩文件
+      uses: actions/upload-artifact@v4
+      with:
+        name: crontab-editor-artifact
+        path: crontab-editor # 上传编译后的可执行文件
+
+    - name: Create GitHub Release # 步骤6: 创建一个 GitHub Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GitHub 自动提供的 token
+      with:
+        tag_name: v${{ github.run_number }} # 使用运行次数作为版本号，例如 v1, v2
+        release_name: Release v${{ github.run_number }}
+        draft: false # 直接发布
+        prerelease: false
+
+    - name: Upload Release Asset # 步骤7: 将编译后的可执行文件作为资产上传到 Release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./crontab-editor
+        asset_name: crontab-editor-linux-amd64
+        asset_content_type: application/octet-stream # 通用二进制文件类型
