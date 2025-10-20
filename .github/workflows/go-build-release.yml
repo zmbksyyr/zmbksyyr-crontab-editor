@@ -7,44 +7,79 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest # 在最新的 Ubuntu 虚拟机上运行此作业
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # 授予此作业写入仓库内容的权限
 
     steps:
-    - name: Checkout code # 步骤1: 检出仓库代码
+    - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Set up Go # 步骤2: 设置 Go 环境
+    - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.22' # 指定你项目使用的 Go 版本
+        go-version: '1.22'
 
-    - name: Build Crontab Editor # 步骤3: 编译你的 Go 程序
+    - name: Initialize Go module if not exists and Build Crontab Editor
+      id: go_module_init_build # 给这个步骤一个ID，以便后续引用
       run: |
-        # 确保在正确的工作目录
-        go mod tidy # 清理或下载依赖
-        CGO_ENABLED=0 go build -o crontab-editor . # 编译为可执行文件，CGO_ENABLED=0 生成静态链接的可执行文件
+        # 获取仓库名称作为模块路径的一部分
+        REPO_NAME=$(basename "${GITHUB_REPOSITORY}")
+        MODULE_INIT_NEEDED=false
 
-    - name: List built files # 步骤4: 列出编译后的文件 (可选，用于调试)
+        # 检查 go.mod 文件是否存在
+        if [ ! -f go.mod ]; then
+          echo "go.mod not found. Initializing Go module: ${REPO_NAME}"
+          go mod init "${REPO_NAME}"
+          MODULE_INIT_NEEDED=true
+        else
+          echo "go.mod found. Skipping module initialization."
+        fi
+
+        # 无论是否初始化，都执行 go mod tidy
+        go mod tidy
+
+        # 设置一个输出变量，指示是否执行了 go mod init
+        echo "MODULE_INIT_NEEDED=${MODULE_INIT_NEEDED}" >> $GITHUB_OUTPUT
+
+        # 编译程序
+        CGO_ENABLED=0 go build -o crontab-editor .
+
+    - name: Commit and Push go.mod/go.sum if created
+      # 只有当上一步设置 MODULE_INIT_NEEDED 为 true 时才执行
+      if: ${{ steps.go_module_init_build.outputs.MODULE_INIT_NEEDED == 'true' }}
+      run: |
+        echo "Detected newly created go.mod/go.sum. Committing to repository..."
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add go.mod go.sum
+        git commit -m "feat: Initialize Go module [skip ci]" # skip ci 防止循环触发
+        git push
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 自动提供的 token
+
+    - name: List built files
       run: ls -l
 
-    - name: Archive production artifacts # 步骤5: 将编译的可执行文件打包成一个压缩文件
+    - name: Archive production artifacts
       uses: actions/upload-artifact@v4
       with:
         name: crontab-editor-artifact
-        path: crontab-editor # 上传编译后的可执行文件
+        path: crontab-editor
 
-    - name: Create GitHub Release # 步骤6: 创建一个 GitHub Release
+    - name: Create GitHub Release
       id: create_release
       uses: actions/create-release@v1
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GitHub 自动提供的 token
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: v${{ github.run_number }} # 使用运行次数作为版本号，例如 v1, v2
+        tag_name: v${{ github.run_number }}
         release_name: Release v${{ github.run_number }}
-        draft: false # 直接发布
+        draft: false
         prerelease: false
 
-    - name: Upload Release Asset # 步骤7: 将编译后的可执行文件作为资产上传到 Release
+    - name: Upload Release Asset
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -52,4 +87,4 @@ jobs:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
         asset_path: ./crontab-editor
         asset_name: crontab-editor-linux-amd64
-        asset_content_type: application/octet-stream # 通用二进制文件类型
+        asset_content_type: application/octet-stream
